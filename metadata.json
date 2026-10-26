@@ -1,0 +1,8 @@
+{
+  "name": "PontoBio - Ponto Eletrônico Biométrico Corporativo",
+  "description": "Sistema corporativo de registro de ponto eletrônico com autenticação biométrica facial e dactilar, conformidade com a Portaria 671/MTP, comprovante digital, cálculo de tolerâncias e auditoria imutável.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
