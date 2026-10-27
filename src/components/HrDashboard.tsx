@@ -4,21 +4,27 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  Dices,
   FileSpreadsheet,
   FileText,
   Filter,
   Fingerprint,
+  MapPin,
   RefreshCw,
   Scan,
   Search,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
+  Sun,
+  Sunset,
   User,
   UserPlus,
 } from 'lucide-react';
 import { COMPANY_INFO } from '../data/mockEmployees';
 import { AuditLogEntry, Employee, TimeRecord } from '../types/ponto';
 import { pontoStorage } from '../services/pontoStorage';
+import { evaluateDailyWorkdayStatus } from '../utils/geo';
 import { DigitalReceiptModal } from './DigitalReceiptModal';
 
 interface HrDashboardProps {
@@ -144,6 +150,15 @@ export const HrDashboard: React.FC<HrDashboardProps> = ({
     link.download = `Relatorio_Ponto_Eletronico_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleJustifyEmployeeDay = async (empId: string) => {
+    try {
+      await pontoStorage.justifyDayWithRandomPunches(empId);
+      onRefreshData();
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (
@@ -283,6 +298,7 @@ export const HrDashboard: React.FC<HrDashboardProps> = ({
                   <th className="px-4 py-3">Colaborador</th>
                   <th className="px-4 py-3">Marcação</th>
                   <th className="px-4 py-3">Método</th>
+                  <th className="px-4 py-3">Ponto & Geolocalização TJPR</th>
                   <th className="px-4 py-3">Conformidade CLT</th>
                   <th className="px-4 py-3 text-right">Comprovante</th>
                 </tr>
@@ -290,7 +306,7 @@ export const HrDashboard: React.FC<HrDashboardProps> = ({
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {filteredRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                       Nenhum registro encontrado com os filtros selecionados.
                     </td>
                   </tr>
@@ -329,6 +345,22 @@ export const HrDashboard: React.FC<HrDashboardProps> = ({
                             Contingência*
                           </span>
                         )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-start gap-1.5">
+                          <MapPin className="h-3.5 w-3.5 text-[#C4A052] shrink-0 mt-0.5" />
+                          <div>
+                            <div className="font-bold text-[#002B49] text-[11px] leading-tight">
+                              {rec.geolocation?.pointName || 'Palácio da Justiça - TJPR'}
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              {rec.geolocation?.comarca || 'Comarca de Curitiba'} ·{' '}
+                              <span className="font-mono text-slate-400">
+                                {rec.geolocation ? `${rec.geolocation.latitude.toFixed(4)}, ${rec.geolocation.longitude.toFixed(4)}` : '-25.4143, -49.2662'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         {rec.toleranceCategory === 'normal' && (
@@ -395,14 +427,18 @@ export const HrDashboard: React.FC<HrDashboardProps> = ({
                 <tr>
                   <th className="px-4 py-3">Colaborador</th>
                   <th className="px-4 py-3">Escala Prevista</th>
-                  <th className="px-4 py-3">Marcações Realizadas</th>
+                  <th className="px-4 py-3">Jornada Diária (Manhã + Tarde)</th>
                   <th className="px-4 py-3">Horas Computadas</th>
                   <th className="px-4 py-3">Saldo / Conformidade</th>
+                  <th className="px-4 py-3 text-right">Justificar Dia</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {employees.map(emp => {
                   const stats = calculateEmployeeDailyHours(emp);
+                  const empRecords = records.filter(r => r.employeeId === emp.id);
+                  const workday = evaluateDailyWorkdayStatus(empRecords);
+
                   return (
                     <tr key={emp.id} className="hover:bg-slate-50/80">
                       <td className="px-4 py-3">
@@ -412,8 +448,31 @@ export const HrDashboard: React.FC<HrDashboardProps> = ({
                       <td className="px-4 py-3 text-slate-600 font-mono">
                         {emp.shift.entry1} - {emp.shift.exit1} / {emp.shift.entry2} - {emp.shift.exit2} ({emp.shift.dailyHours}h)
                       </td>
-                      <td className="px-4 py-3 font-mono tabular-nums font-semibold text-slate-800">
-                        {stats.punchesCount} batida(s)
+                      <td className="px-4 py-3">
+                        <div className="space-y-1">
+                          <span
+                            className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded text-[11px] border ${
+                              workday.isDayJustified
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : workday.hasMorningPunch || workday.hasAfternoonPunch
+                                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                : 'bg-slate-100 text-slate-600 border-slate-200'
+                            }`}
+                          >
+                            {workday.isDayJustified ? (
+                              <>
+                                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                                Dia Justificado (2/2)
+                              </>
+                            ) : (
+                              `${workday.totalPunchesToday}/2 Batidas`
+                            )}
+                          </span>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            {workday.morningRecord ? `☀️ ${workday.morningRecord.formattedTime}` : '☀️ Pendente'} ·{' '}
+                            {workday.afternoonRecord ? `🌆 ${workday.afternoonRecord.formattedTime}` : '🌆 Pendente'}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-3 font-mono font-bold text-[#002B49] text-sm tabular-nums">
                         {stats.formattedWorked}
@@ -430,6 +489,17 @@ export const HrDashboard: React.FC<HrDashboardProps> = ({
                         >
                           {stats.balanceLabel}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleJustifyEmployeeDay(emp.id)}
+                          title="Gerar 2 batidas aleatórias (manhã e tarde) para justificar o dia trabalhado"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md bg-[#C4A052] hover:bg-[#b08d42] text-slate-950 shadow-2xs transition-all cursor-pointer"
+                        >
+                          <Dices className="h-3.5 w-3.5" />
+                          <span>2 Batidas Aleatórias</span>
+                        </button>
                       </td>
                     </tr>
                   );

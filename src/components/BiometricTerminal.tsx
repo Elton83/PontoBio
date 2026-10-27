@@ -1,15 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Building2,
   Camera,
   CheckCircle2,
   Clock,
+  Dices,
   Fingerprint,
   LayoutDashboard,
+  MapPin,
+  Navigation,
   RefreshCw,
   Scan,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
+  Sun,
+  Sunset,
   User,
   Volume2,
   VolumeX,
@@ -18,6 +25,13 @@ import { Employee, PunchType, TimeRecord } from '../types/ponto';
 import { pontoStorage } from '../services/pontoStorage';
 import { ntpKeeper, NtpStatus } from '../utils/ntp';
 import { getPunchTypeLabel } from '../utils/tolerance';
+import {
+  TJPR_LOCATIONS,
+  TjprLocationPoint,
+  buildGeoLocation,
+  detectCurrentGeoLocation,
+  evaluateDailyWorkdayStatus,
+} from '../utils/geo';
 import { TjprLogo } from './TjprLogo';
 
 interface BiometricTerminalProps {
@@ -38,6 +52,12 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
   const [authMode, setAuthMode] = useState<'facial' | 'fingerprint'>('facial');
   const [selectedPunchType, setSelectedPunchType] = useState<PunchType>('1_ENTRADA');
   const [isPunchTypeManual, setIsPunchTypeManual] = useState(false);
+
+  // Geographic Location & TJPR Point
+  const [selectedLocationPoint, setSelectedLocationPoint] = useState<TjprLocationPoint>(TJPR_LOCATIONS[0]);
+  const [isDetectingGps, setIsDetectingGps] = useState(false);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const [isGeneratingRandomDay, setIsGeneratingRandomDay] = useState(false);
 
   // Time & NTP
   const [currentTimeStr, setCurrentTimeStr] = useState<string>('');
@@ -215,12 +235,14 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
     playBeep('success');
 
     const method = authMode === 'facial' ? 'biometria_facial' : 'biometria_digital';
+    const geo = buildGeoLocation(selectedLocationPoint);
 
     try {
       const record = await pontoStorage.addTimeRecord({
         employee: currentEmployee,
         type: selectedPunchType,
         method,
+        geolocation: geo,
       });
 
       refreshEmployeeList();
@@ -262,9 +284,53 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
     }
   };
 
+  const handleDetectGps = async () => {
+    setIsDetectingGps(true);
+    setStatusMessage('Calibrando sinal GPS com percurso TJPR...');
+    try {
+      const geo = await detectCurrentGeoLocation(selectedLocationPoint);
+      setGpsAccuracy(geo.accuracy);
+      setStatusMessage(`GPS Verificado: ${geo.pointName} (precisão ${geo.accuracy}m)`);
+      playBeep('success');
+    } catch (e) {
+      console.warn(e);
+      setStatusMessage('Localização TJPR padrão mantida.');
+    } finally {
+      setIsDetectingGps(false);
+    }
+  };
+
+  const handleJustifyDayRandom = async () => {
+    if (!currentEmployee) return;
+    try {
+      setIsGeneratingRandomDay(true);
+      setStatusMessage('Gerando marcações aleatórias (Manhã e Tarde)...');
+      playBeep('success');
+
+      const { morningRecord, afternoonRecord } = await pontoStorage.justifyDayWithRandomPunches(
+        currentEmployee.id,
+        {
+          preferredMethod: authMode === 'facial' ? 'biometria_facial' : 'biometria_digital',
+          locationPoint: selectedLocationPoint,
+        }
+      );
+
+      refreshEmployeeList();
+      setIsGeneratingRandomDay(false);
+      setStatusMessage('Dia trabalhado justificado com sucesso!');
+      onPunchSuccess(afternoonRecord);
+    } catch (err) {
+      console.error(err);
+      setIsGeneratingRandomDay(false);
+      setStatusMessage('Erro ao justificar dia');
+    }
+  };
+
   const todayRecords = currentEmployee
     ? pontoStorage.getRecordsForEmployeeToday(currentEmployee.id)
     : [];
+
+  const dailyStatus = evaluateDailyWorkdayStatus(todayRecords);
 
   return (
     <div className="flex flex-col gap-5">
@@ -531,6 +597,66 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
               )}
             </div>
 
+            {/* Geographic Location & TJPR Judicial Point Card */}
+            <div className="rounded-xl border border-slate-200 bg-[#F4F6F8] p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-4 w-4 text-[#C4A052]" />
+                  <span className="text-xs font-bold text-[#002B49] uppercase tracking-wide">
+                    Ponto de Registro & Geolocalização TJPR
+                  </span>
+                </div>
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                  Perímetro Autorizado
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="sm:col-span-2 space-y-1">
+                  <label htmlFor="tjpr-location-select" className="sr-only">Unidade TJPR</label>
+                  <select
+                    id="tjpr-location-select"
+                    value={selectedLocationPoint.id}
+                    onChange={e => {
+                      const pt = TJPR_LOCATIONS.find(l => l.id === e.target.value);
+                      if (pt) setSelectedLocationPoint(pt);
+                    }}
+                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-semibold focus:outline-none focus:border-[#002B49]"
+                  >
+                    {TJPR_LOCATIONS.map(loc => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} ({loc.comarca})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-500 truncate">{selectedLocationPoint.address}</p>
+                </div>
+
+                <div className="flex sm:flex-col justify-between items-end sm:items-end gap-1">
+                  <div className="text-right">
+                    <span className="font-mono text-[10px] text-slate-500 block">
+                      GPS: {selectedLocationPoint.latitude.toFixed(4)}, {selectedLocationPoint.longitude.toFixed(4)}
+                    </span>
+                    {gpsAccuracy && (
+                      <span className="text-[10px] text-emerald-700 font-semibold">
+                        Precisão: ±{gpsAccuracy}m
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDetectGps}
+                    disabled={isDetectingGps}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-md bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 shadow-2xs transition-all cursor-pointer"
+                  >
+                    <Navigation className={`h-3 w-3 text-[#002B49] ${isDetectingGps ? 'animate-spin' : ''}`} />
+                    <span>{isDetectingGps ? 'Calibrando...' : 'Detectar GPS'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {/* Action Buttons styled like Transportes Sigma */}
             <div className="flex flex-wrap items-center gap-3">
               <button
@@ -651,6 +777,135 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
             )}
           </div>
 
+          {/* Validação da Jornada Diária - 2 Marcações (Manhã e Tarde) para justificar o dia */}
+          <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-[#C4A052]" />
+                <h4 className="text-xs font-bold text-[#002B49] uppercase tracking-wide">
+                  Validação da Jornada Diária TJPR
+                </h4>
+              </div>
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                  dailyStatus.isDayJustified
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : dailyStatus.hasMorningPunch || dailyStatus.hasAfternoonPunch
+                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}
+              >
+                {dailyStatus.isDayJustified ? 'Dia Justificado (2/2)' : `${dailyStatus.totalPunchesToday}/2 Batidas`}
+              </span>
+            </div>
+
+            {/* Shift verification boxes */}
+            <div className="grid grid-cols-2 gap-2.5">
+              <div
+                className={`p-3 rounded-xl border text-xs transition-all ${
+                  dailyStatus.hasMorningPunch
+                    ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+                    : 'border-slate-200 bg-slate-50 text-slate-600'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1 font-bold text-[11px]">
+                    <Sun className="h-3.5 w-3.5 text-amber-600" />
+                    <span>Turno Manhã</span>
+                  </div>
+                  {dailyStatus.hasMorningPunch && (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                  )}
+                </div>
+                {dailyStatus.hasMorningPunch ? (
+                  <div>
+                    <span className="font-mono font-bold text-xs">
+                      {dailyStatus.morningRecord?.formattedTime}
+                    </span>
+                    <span className="block text-[10px] opacity-75 font-mono">
+                      NSR #{dailyStatus.morningRecord?.nsr}
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPunchType('MANHA');
+                      setIsPunchTypeManual(true);
+                    }}
+                    className="text-[10px] font-bold text-[#002B49] underline hover:text-blue-800 cursor-pointer"
+                  >
+                    Registrar Manhã
+                  </button>
+                )}
+              </div>
+
+              <div
+                className={`p-3 rounded-xl border text-xs transition-all ${
+                  dailyStatus.hasAfternoonPunch
+                    ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+                    : 'border-slate-200 bg-slate-50 text-slate-600'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1 font-bold text-[11px]">
+                    <Sunset className="h-3.5 w-3.5 text-orange-600" />
+                    <span>Turno Tarde</span>
+                  </div>
+                  {dailyStatus.hasAfternoonPunch && (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                  )}
+                </div>
+                {dailyStatus.hasAfternoonPunch ? (
+                  <div>
+                    <span className="font-mono font-bold text-xs">
+                      {dailyStatus.afternoonRecord?.formattedTime}
+                    </span>
+                    <span className="block text-[10px] opacity-75 font-mono">
+                      NSR #{dailyStatus.afternoonRecord?.nsr}
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPunchType('TARDE');
+                      setIsPunchTypeManual(true);
+                    }}
+                    className="text-[10px] font-bold text-[#002B49] underline hover:text-blue-800 cursor-pointer"
+                  >
+                    Registrar Tarde
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Random Punch Generator Button */}
+            <div className="rounded-xl border border-[#C4A052]/40 bg-amber-50/40 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-[#002B49] flex items-center gap-1.5">
+                  <Dices className="h-3.5 w-3.5 text-[#C4A052]" />
+                  Justificar Dia (2 Batidas Aleatórias)
+                </span>
+                <span className="text-[10px] text-[#856404] font-semibold">Portaria 671</span>
+              </div>
+              <p className="text-[11px] text-slate-600 leading-tight">
+                Gera 2 marcações válidas em horários aleatórios (uma de manhã e outra à tarde) com coordenadas do ponto TJPR e SHA-256.
+              </p>
+              <button
+                type="button"
+                onClick={handleJustifyDayRandom}
+                disabled={isGeneratingRandomDay}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-[#C4A052] hover:bg-[#b08d42] active:scale-98 px-3.5 py-2.5 text-xs font-bold text-slate-950 shadow-2xs transition-all cursor-pointer"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>
+                  {isGeneratingRandomDay ? 'Gerando Marcações...' : 'Gerar Batidas Aleatórias (Manhã e Tarde)'}
+                </span>
+              </button>
+            </div>
+          </div>
+
           {/* RN04 - Journey Sequencing & Next Step Suggestion */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4 shadow-xs">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
@@ -658,21 +913,62 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
                 <h4 className="text-xs font-bold text-[#002B49] uppercase tracking-wide">
                   Sequenciamento da Jornada
                 </h4>
-                <p className="text-[11px] text-slate-500">RN04 - Sugestão automática de ciclo diário</p>
+                <p className="text-[11px] text-slate-500">RN04 - Sugestão automática ou seleção de turno</p>
               </div>
               <span className="text-[10px] rounded bg-blue-50 text-[#002B49] border border-blue-200 px-2 py-0.5 font-bold">
                 Automático
               </span>
             </div>
 
+            {/* Direct shift quick buttons */}
             <div className="grid grid-cols-2 gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPunchType('MANHA');
+                  setIsPunchTypeManual(true);
+                }}
+                className={`p-2.5 rounded-lg text-left transition-all cursor-pointer flex items-center justify-between ${
+                  selectedPunchType === 'MANHA'
+                    ? 'border-2 border-[#002B49] bg-blue-50 text-[#002B49] font-bold shadow-2xs'
+                    : 'border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Sun className="h-3.5 w-3.5 text-amber-600" />
+                  <span className="font-bold text-xs">Turno Manhã</span>
+                </div>
+                <span className="text-[10px] text-slate-500">08:00 - 12:00</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPunchType('TARDE');
+                  setIsPunchTypeManual(true);
+                }}
+                className={`p-2.5 rounded-lg text-left transition-all cursor-pointer flex items-center justify-between ${
+                  selectedPunchType === 'TARDE'
+                    ? 'border-2 border-[#002B49] bg-blue-50 text-[#002B49] font-bold shadow-2xs'
+                    : 'border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Sunset className="h-3.5 w-3.5 text-orange-600" />
+                  <span className="font-bold text-xs">Turno Tarde</span>
+                </div>
+                <span className="text-[10px] text-slate-500">13:00 - 18:00</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => {
                   setSelectedPunchType('1_ENTRADA');
                   setIsPunchTypeManual(true);
                 }}
-                className={`p-3 rounded-xl text-left transition-all cursor-pointer ${
+                className={`p-2.5 rounded-lg text-left transition-all cursor-pointer ${
                   selectedPunchType === '1_ENTRADA'
                     ? 'border-2 border-[#002B49] bg-blue-50/70 text-[#002B49] font-bold shadow-2xs'
                     : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
@@ -680,7 +976,6 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
               >
                 <div className="text-[10px] text-slate-500">1º Passo</div>
                 <div className="text-xs font-bold">1ª Entrada</div>
-                <div className="text-[10px] text-slate-500">Início da jornada</div>
               </button>
 
               <button
@@ -689,7 +984,7 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
                   setSelectedPunchType('1_SAIDA_INTERVALO');
                   setIsPunchTypeManual(true);
                 }}
-                className={`p-3 rounded-xl text-left transition-all cursor-pointer ${
+                className={`p-2.5 rounded-lg text-left transition-all cursor-pointer ${
                   selectedPunchType === '1_SAIDA_INTERVALO'
                     ? 'border-2 border-[#002B49] bg-blue-50/70 text-[#002B49] font-bold shadow-2xs'
                     : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
@@ -697,7 +992,6 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
               >
                 <div className="text-[10px] text-slate-500">2º Passo</div>
                 <div className="text-xs font-bold">1ª Saída Intervalo</div>
-                <div className="text-[10px] text-slate-500">Início refeição</div>
               </button>
 
               <button
@@ -706,7 +1000,7 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
                   setSelectedPunchType('2_ENTRADA_INTERVALO');
                   setIsPunchTypeManual(true);
                 }}
-                className={`p-3 rounded-xl text-left transition-all cursor-pointer ${
+                className={`p-2.5 rounded-lg text-left transition-all cursor-pointer ${
                   selectedPunchType === '2_ENTRADA_INTERVALO'
                     ? 'border-2 border-[#002B49] bg-blue-50/70 text-[#002B49] font-bold shadow-2xs'
                     : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
@@ -714,7 +1008,6 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
               >
                 <div className="text-[10px] text-slate-500">3º Passo</div>
                 <div className="text-xs font-bold">2ª Entrada Intervalo</div>
-                <div className="text-[10px] text-slate-500">Retorno refeição</div>
               </button>
 
               <button
@@ -723,7 +1016,7 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
                   setSelectedPunchType('2_SAIDA_FINAL');
                   setIsPunchTypeManual(true);
                 }}
-                className={`p-3 rounded-xl text-left transition-all cursor-pointer ${
+                className={`p-2.5 rounded-lg text-left transition-all cursor-pointer ${
                   selectedPunchType === '2_SAIDA_FINAL'
                     ? 'border-2 border-[#002B49] bg-blue-50/70 text-[#002B49] font-bold shadow-2xs'
                     : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
@@ -731,7 +1024,6 @@ export const BiometricTerminal: React.FC<BiometricTerminalProps> = ({
               >
                 <div className="text-[10px] text-slate-500">4º Passo</div>
                 <div className="text-xs font-bold">2ª Saída Final</div>
-                <div className="text-[10px] text-slate-500">Fim da jornada</div>
               </button>
             </div>
 

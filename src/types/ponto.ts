@@ -1,4 +1,6 @@
 export type PunchType = 
+  | 'MANHA'            // Marcação do Turno da Manhã (Requisito 2 marcações diárias)
+  | 'TARDE'            // Marcação do Turno da Tarde (Requisito 2 marcações diárias)
   | '1_ENTRADA'        // 1ª Entrada (Início da jornada)
   | '1_SAIDA_INTERVALO' // 1ª Saída Intervalo (Início Almoço)
   | '2_ENTRADA_INTERVALO' // 2ª Entrada Intervalo (Retorno Almoço)
@@ -7,6 +9,16 @@ export type PunchType =
   | 'HORA_EXTRA_SAIDA';
 
 export type AuthMethod = 'biometria_facial' | 'biometria_digital' | 'contingencia';
+
+export interface GeoLocation {
+  latitude: number;
+  longitude: number;
+  accuracy: number; // Precisão em metros (ex: 8m)
+  pointName: string; // Ex: "Palácio da Justiça - Sede TJPR"
+  address: string; // Ex: "Praça Nossa Senhora de Salette, s/n - Centro Cívico, Curitiba / PR"
+  comarca: string; // Ex: "Comarca de Curitiba / Foro Central"
+  perimeterValid: boolean; // Validação no perímetro do Tribunal de Justiça do PR
+}
 
 export type ToleranceCategory = 
   | 'normal' 
@@ -65,6 +77,7 @@ export interface TimeRecord {
   varianceMinutes: number; // Desvio em minutos em relação ao horário previsto
   hashSha256: string; // SHA-256 do registro
   previousHash: string; // Hash do registro anterior (Cadeia de integridade inviolável)
+  geolocation?: GeoLocation; // Ponto geográfico de captura (Tribunal de Justiça do PR)
   justification?: string; // Obrigatória em contingência
   supervisorApproved?: boolean;
 }

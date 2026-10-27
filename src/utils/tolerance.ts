@@ -19,6 +19,14 @@ export function evaluateTolerance(
   let isExit = false;
 
   switch (type) {
+    case 'MANHA':
+      expectedTimeStr = shift.entry1 || '08:00';
+      isExit = false;
+      break;
+    case 'TARDE':
+      expectedTimeStr = shift.exit2 || '17:00';
+      isExit = true;
+      break;
     case '1_ENTRADA':
       expectedTimeStr = shift.entry1;
       isExit = false;
@@ -130,6 +138,10 @@ export function evaluateTolerance(
 
 export function getPunchTypeLabel(type: PunchType): string {
   switch (type) {
+    case 'MANHA':
+      return 'Turno Manhã (1ª Marcação)';
+    case 'TARDE':
+      return 'Turno Tarde (2ª Marcação)';
     case '1_ENTRADA':
       return '1ª Entrada (Início Jornada)';
     case '1_SAIDA_INTERVALO':

@@ -1,6 +1,7 @@
 import { COMPANY_INFO, INITIAL_EMPLOYEES } from '../data/mockEmployees';
-import { AuditLogEntry, Employee, PunchType, TimeRecord } from '../types/ponto';
+import { AuditLogEntry, Employee, GeoLocation, PunchType, TimeRecord } from '../types/ponto';
 import { computeRecordHash } from '../utils/crypto';
+import { buildGeoLocation, generateRandomShiftTimes, TJPR_LOCATIONS, TjprLocationPoint } from '../utils/geo';
 import { ntpKeeper } from '../utils/ntp';
 import { evaluateTolerance, getPunchTypeLabel } from '../utils/tolerance';
 
@@ -22,7 +23,7 @@ async function createInitialRecords(): Promise<{ records: TimeRecord[]; lastNsr:
   const baseEmp = INITIAL_EMPLOYEES[0]; // Ana Silva
   const todayStr = ntpKeeper.formatBrazilianDate();
   
-  // 1ª Entrada
+  // 1ª Entrada (Manhã)
   const t1 = new Date();
   t1.setHours(8, 58, 0, 0); // 08:58 (within 5 min tolerance of 09:00)
   const iso1 = t1.toISOString();
@@ -31,10 +32,12 @@ async function createInitialRecords(): Promise<{ records: TimeRecord[]; lastNsr:
     timestamp: iso1,
     employeeCpf: baseEmp.cpf,
     employeeMatricula: baseEmp.matricula,
-    type: '1_ENTRADA',
+    type: 'MANHA',
     cnpj: COMPANY_INFO.cnpj,
     previousHash,
   });
+
+  const geo1 = buildGeoLocation(TJPR_LOCATIONS[0]);
 
   records.push({
     id: `rec-${nsr}`,
@@ -49,8 +52,8 @@ async function createInitialRecords(): Promise<{ records: TimeRecord[]; lastNsr:
     formattedDate: todayStr,
     formattedTime: '08:58:14',
     ntpServer: 'a.st1.ntp.br (Stratum 1)',
-    type: '1_ENTRADA',
-    typeLabel: getPunchTypeLabel('1_ENTRADA'),
+    type: 'MANHA',
+    typeLabel: getPunchTypeLabel('MANHA'),
     method: 'biometria_facial',
     status: 'Confirmado',
     toleranceCategory: 'tolerancia_aplicada',
@@ -58,24 +61,27 @@ async function createInitialRecords(): Promise<{ records: TimeRecord[]; lastNsr:
     varianceMinutes: -2,
     hashSha256: hash1,
     previousHash,
+    geolocation: geo1,
   });
 
   previousHash = hash1;
   nsr++;
 
-  // 1ª Saída Intervalo
+  // 1ª Saída / Tarde (Ana Silva)
   const t2 = new Date();
-  t2.setHours(13, 1, 0, 0);
+  t2.setHours(17, 12, 0, 0);
   const iso2 = t2.toISOString();
   const hash2 = await computeRecordHash({
     nsr,
     timestamp: iso2,
     employeeCpf: baseEmp.cpf,
     employeeMatricula: baseEmp.matricula,
-    type: '1_SAIDA_INTERVALO',
+    type: 'TARDE',
     cnpj: COMPANY_INFO.cnpj,
     previousHash,
   });
+
+  const geo2 = buildGeoLocation(TJPR_LOCATIONS[0]);
 
   records.push({
     id: `rec-${nsr}`,
@@ -88,36 +94,39 @@ async function createInitialRecords(): Promise<{ records: TimeRecord[]; lastNsr:
     employeeDepartment: baseEmp.department,
     timestamp: iso2,
     formattedDate: todayStr,
-    formattedTime: '13:01:22',
+    formattedTime: '17:12:44',
     ntpServer: 'a.st1.ntp.br (Stratum 1)',
-    type: '1_SAIDA_INTERVALO',
-    typeLabel: getPunchTypeLabel('1_SAIDA_INTERVALO'),
+    type: 'TARDE',
+    typeLabel: getPunchTypeLabel('TARDE'),
     method: 'biometria_digital',
     status: 'Confirmado',
     toleranceCategory: 'tolerancia_aplicada',
-    toleranceNotice: 'Variação de +1 min (Tolerância legal CLT Art. 58)',
-    varianceMinutes: 1,
+    toleranceNotice: 'Variação de +2 min (Tolerância legal CLT Art. 58)',
+    varianceMinutes: 2,
     hashSha256: hash2,
     previousHash,
+    geolocation: geo2,
   });
 
   previousHash = hash2;
   nsr++;
 
-  // Record for Carlos Mendes (Gerente)
+  // Record for Carlos Mendes (Gerente) - Turno da Manhã
   const empCarlos = INITIAL_EMPLOYEES[1];
   const t3 = new Date();
-  t3.setHours(8, 0, 0, 0);
+  t3.setHours(8, 2, 0, 0);
   const iso3 = t3.toISOString();
   const hash3 = await computeRecordHash({
     nsr,
     timestamp: iso3,
     employeeCpf: empCarlos.cpf,
     employeeMatricula: empCarlos.matricula,
-    type: '1_ENTRADA',
+    type: 'MANHA',
     cnpj: COMPANY_INFO.cnpj,
     previousHash,
   });
+
+  const geo3 = buildGeoLocation(TJPR_LOCATIONS[1]);
 
   records.push({
     id: `rec-${nsr}`,
@@ -130,17 +139,18 @@ async function createInitialRecords(): Promise<{ records: TimeRecord[]; lastNsr:
     employeeDepartment: empCarlos.department,
     timestamp: iso3,
     formattedDate: todayStr,
-    formattedTime: '08:00:05',
+    formattedTime: '08:02:18',
     ntpServer: 'a.st1.ntp.br (Stratum 1)',
-    type: '1_ENTRADA',
-    typeLabel: getPunchTypeLabel('1_ENTRADA'),
+    type: 'MANHA',
+    typeLabel: getPunchTypeLabel('MANHA'),
     method: 'biometria_facial',
     status: 'Confirmado',
-    toleranceCategory: 'normal',
-    toleranceNotice: 'Horário exato da escala',
-    varianceMinutes: 0,
+    toleranceCategory: 'tolerancia_aplicada',
+    toleranceNotice: 'Variação de +2 min (Tolerância legal)',
+    varianceMinutes: 2,
     hashSha256: hash3,
     previousHash,
+    geolocation: geo3,
   });
 
   return { records, lastNsr: nsr };
@@ -262,19 +272,23 @@ class PontoStorageService {
 
   /**
    * RN04 - Automatic Journey Sequencing
-   * Suggests the next natural punch based on punches already made today
+   * Suggests the next punch based on the two required daily shifts (Manhã e Tarde)
    */
   public suggestNextPunchType(employeeId: string): PunchType {
     const todayRecords = this.getRecordsForEmployeeToday(employeeId);
-    const count = todayRecords.length;
+    
+    // Check if morning and afternoon punches have been made
+    const hasMorning = todayRecords.some(
+      r => r.type === 'MANHA' || r.type === '1_ENTRADA' || (r.formattedTime && parseInt(r.formattedTime.split(':')[0], 10) < 13)
+    );
+    const hasAfternoon = todayRecords.some(
+      r => (r.type === 'TARDE' || r.type === '2_SAIDA_FINAL' || (r.formattedTime && parseInt(r.formattedTime.split(':')[0], 10) >= 13)) &&
+           (r.type !== 'MANHA' && r.type !== '1_ENTRADA')
+    );
 
-    if (count === 0) return '1_ENTRADA';
-    if (count === 1) return '1_SAIDA_INTERVALO';
-    if (count === 2) return '2_ENTRADA_INTERVALO';
-    if (count === 3) return '2_SAIDA_FINAL';
-    // If already 4 punches, extra punches default to Extraordinária
-    if (count % 2 === 0) return 'HORA_EXTRA_ENTRADA';
-    return 'HORA_EXTRA_SAIDA';
+    if (!hasMorning) return 'MANHA';
+    if (!hasAfternoon) return 'TARDE';
+    return 'HORA_EXTRA_ENTRADA';
   }
 
   /**
@@ -364,6 +378,7 @@ class PontoStorageService {
     justification?: string;
     supervisorApproved?: boolean;
     customTimestamp?: Date; // For testing simulation
+    geolocation?: GeoLocation;
   }): Promise<TimeRecord> {
     const { employee, type, method, justification, supervisorApproved, customTimestamp } = params;
 
@@ -399,6 +414,7 @@ class PontoStorageService {
 
     // Evaluate CLT Art. 58 tolerance
     const tolerance = evaluateTolerance(type, ntpNow, employee.shift);
+    const geolocation = params.geolocation || buildGeoLocation(TJPR_LOCATIONS[0]);
 
     const record: TimeRecord = {
       id: `rec-${nextNsr}`,
@@ -422,6 +438,7 @@ class PontoStorageService {
       varianceMinutes: tolerance.varianceMinutes,
       hashSha256,
       previousHash,
+      geolocation,
       justification,
       supervisorApproved,
     };
@@ -444,11 +461,61 @@ class PontoStorageService {
       employeeId: employee.id,
       employeeName: employee.name,
       matricula: employee.matricula,
-      details: `NSR ${nextNsr} gravado com sucesso (${record.typeLabel}). Método: ${method}. Hash: ${hashSha256.substring(0, 16)}...${justification ? ` Justificativa: ${justification}` : ''}`,
+      details: `NSR ${nextNsr} gravado com sucesso (${record.typeLabel}). Método: ${method}. Local: ${geolocation.pointName} (${geolocation.latitude}, ${geolocation.longitude}). Hash: ${hashSha256.substring(0, 16)}...${justification ? ` Justificativa: ${justification}` : ''}`,
       severity: method === 'contingencia' ? 'warning' : 'success',
     });
 
     return record;
+  }
+
+  /**
+   * Generates two random punches (Morning and Afternoon) to justify the full workday
+   * as requested by the user.
+   */
+  public async justifyDayWithRandomPunches(
+    employeeId: string,
+    options?: {
+      preferredMethod?: 'biometria_facial' | 'biometria_digital';
+      locationPoint?: TjprLocationPoint;
+      date?: Date;
+    }
+  ): Promise<{ morningRecord: TimeRecord; afternoonRecord: TimeRecord }> {
+    const employee = this.getEmployeeById(employeeId);
+    if (!employee) throw new Error('Colaborador não encontrado');
+
+    const method = options?.preferredMethod || 'biometria_facial';
+    const locPoint = options?.locationPoint || TJPR_LOCATIONS[0];
+    const targetDate = options?.date || ntpKeeper.getNow();
+
+    // Clean existing today punches for this employee so the day is freshly and cleanly justified
+    const todayStr = ntpKeeper.formatBrazilianDate(targetDate);
+    this.records = this.records.filter(r => !(r.employeeId === employeeId && r.formattedDate === todayStr));
+
+    // Generate random realistic hours within regulatory limits
+    const { morningTime, afternoonTime } = generateRandomShiftTimes(targetDate);
+
+    // 1. Morning Punch
+    const morningGeo = buildGeoLocation(locPoint);
+    const morningRecord = await this.addTimeRecord({
+      employee,
+      type: 'MANHA',
+      method,
+      customTimestamp: morningTime,
+      geolocation: morningGeo,
+    });
+
+    // 2. Afternoon Punch (can alternate method for richness: face in morning, digital in afternoon)
+    const afternoonMethod = method === 'biometria_facial' ? 'biometria_digital' : 'biometria_facial';
+    const afternoonGeo = buildGeoLocation(locPoint);
+    const afternoonRecord = await this.addTimeRecord({
+      employee,
+      type: 'TARDE',
+      method: afternoonMethod,
+      customTimestamp: afternoonTime,
+      geolocation: afternoonGeo,
+    });
+
+    return { morningRecord, afternoonRecord };
   }
 
   /**

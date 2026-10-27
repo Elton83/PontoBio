@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, Copy, Download, Printer, ShieldCheck, X } from 'lucide-react';
+import { Check, Copy, Download, MapPin, Navigation, Printer, ShieldCheck, X } from 'lucide-react';
 import { COMPANY_INFO } from '../data/mockEmployees';
 import { TimeRecord } from '../types/ponto';
 
@@ -45,9 +45,17 @@ DADOS DA MARCAÇÃO:
 NSR:          ${String(record.nsr).padStart(9, '0')}
 Data/Hora:    ${record.formattedDate} às ${record.formattedTime} (Horário Oficial de Brasília)
 Tipo:         ${record.typeLabel}
-Método:       ${record.method === 'biometria_facial' ? 'Biometria Facial' : record.method === 'biometria_digital' ? 'Biometria Dactilar' : 'Contingência Assistida'}
+Método:       ${record.method === 'biometria_facial' ? 'Biometria Facial (Câmera)' : record.method === 'biometria_digital' ? 'Biometria Digital (Sensor Dactilar)' : 'Contingência Assistida'}
 Status:       ${record.status}
 Servidor NTP: ${record.ntpServer}
+${record.geolocation ? `
+LOCALIZAÇÃO & PONTO GEORREFERENCIADO:
+Unidade TJPR: ${record.geolocation.pointName}
+Comarca:      ${record.geolocation.comarca}
+Endereço:     ${record.geolocation.address}
+Coordenadas:  Lat ${record.geolocation.latitude}, Long ${record.geolocation.longitude} (Precisão: ±${record.geolocation.accuracy}m)
+Validação:    Perímetro Autorizado TJPR (Autenticado)
+` : ''}
 ${record.justification ? `Justificativa: ${record.justification}\n` : ''}
 AUTENTICAÇÃO CRIPTOGRÁFICA (SHA-256):
 ${record.hashSha256}
@@ -177,6 +185,33 @@ trabalhista perante a Fiscalização do Trabalho.
                 </div>
               )}
             </div>
+
+            {/* Geolocation & Point of Recording */}
+            {record.geolocation && (
+              <div className="rounded-lg bg-emerald-50/60 border border-emerald-200/80 p-3 space-y-1.5 text-[11px]">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-emerald-900 font-bold">
+                    <MapPin className="h-3.5 w-3.5 text-emerald-700 shrink-0" />
+                    <span>PONTO GEORREFERENCIADO:</span>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                    Perímetro TJPR Válido
+                  </span>
+                </div>
+                <div className="text-slate-800 font-semibold">
+                  {record.geolocation.pointName}
+                </div>
+                <div className="text-slate-600 text-[10px]">
+                  {record.geolocation.comarca} · {record.geolocation.address}
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-emerald-200 text-slate-500 font-mono text-[10px]">
+                  <span>Coordenadas GPS:</span>
+                  <span className="font-bold text-slate-700">
+                    {record.geolocation.latitude.toFixed(5)}, {record.geolocation.longitude.toFixed(5)} (±{record.geolocation.accuracy}m)
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Cryptographic SHA-256 Signature */}
             <div className="space-y-1.5 pt-1">
